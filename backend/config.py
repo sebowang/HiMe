@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     DEFAULT_MODEL_ANTHROPIC:      str = "claude-sonnet-4-6"
     DEFAULT_MODEL_MISTRAL:        str = "mistral-medium-latest"
     DEFAULT_MODEL_GROQ:           str = "llama-3.3-70b-versatile"
-    DEFAULT_MODEL_DEEPSEEK:       str = "deepseek-v4-flash"
+    DEFAULT_MODEL_DEEPSEEK:       str = "deepseek-flash"
     DEFAULT_MODEL_XAI:            str = "grok-4-1-fast-reasoning"
     DEFAULT_MODEL_OPENROUTER:     str = "anthropic/claude-sonnet-4-6"
     DEFAULT_MODEL_PERPLEXITY:     str = "sonar-pro"
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # automatically sets ``parallel_tool_calls=False`` in that case.
     OPENAI_REASONING_EFFORT: str | None = "minimal"
 
-    # DeepSeek V4 (deepseek-v4-flash / deepseek-v4-pro) — both models support
+    # DeepSeek V4.1 (deepseek-flash / deepseek-v4-pro) — both models support
     # dual modes (thinking / non-thinking) plus tool calls and a 1M context.
     #   DEEPSEEK_THINKING (default = "disabled" — fast/cheap for tool-calling
     #   agentic loops; flip to "enabled" only when deep reasoning is required):
@@ -117,6 +117,19 @@ class Settings(BaseSettings):
     #     verbatim. "minimal" is OpenAI-only and is NOT forwarded to DeepSeek.
     DEEPSEEK_THINKING:        str | None = "disabled"
     DEEPSEEK_REASONING_EFFORT: str | None = None
+    # Output cap sent as ``max_tokens`` when the caller sets none. DeepSeek's
+    # own default is 8K (non-thinking), which truncates large tool calls
+    # such as create_page. API maximum is 384K.
+    DEEPSEEK_MAX_TOKENS: int = 32768
+
+    # Abort an OpenAI-compatible stream (DeepSeek, OpenAI, vLLM, …) when no
+    # parsed chunk arrives for this many seconds, and hand the call to
+    # FALLBACK_LLM_PROVIDER. Needed because a queued DeepSeek request streams
+    # ": keep-alive" comments that defeat the httpx read timeout. 0 = off.
+    LLM_STREAM_STALL_TIMEOUT: float = 90.0
+    # After the primary model stalls/overloads, route calls straight to the
+    # fallback for this many seconds instead of re-waiting on every call.
+    LLM_FALLBACK_COOLDOWN_SECONDS: float = 600.0
 
     AUTO_RESTORE_AGENT:   bool = False   # restore last agent on startup
     AGENT_MAX_ITERATIONS: int  = 100     # hard safety limit for loop iterations

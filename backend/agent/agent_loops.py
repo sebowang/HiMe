@@ -23,6 +23,10 @@ from ..utils import ts_now
 from .errors import ErrorCategory, FallbackTriggered, classify_error
 from .llm import set_llm_log_context
 
+# model name → time.monotonic() until which that primary is bypassed in favour
+# of FALLBACK_LLM_PROVIDER (set when it stalls / hits capacity limits).
+_primary_down_until: dict[str, float] = {}
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -433,23 +437,32 @@ async def _llm_call(
 
     async def _run_with_fallback() -> None:
         """Run the consume loop against the primary provider; if the primary
-        exhausts its capacity-error retry budget (FallbackTriggered) and a
-        fallback provider is configured, swap to the fallback for one retry.
-        Any partial state from the failed primary attempt is discarded."""
-        try:
-            await _consume(agent.llm)
-            return
-        except FallbackTriggered:
-            if not (settings.FALLBACK_LLM_PROVIDER and settings.FALLBACK_LLM_MODEL):
-                raise
-        # Primary gave up on capacity errors — discard partial output and
-        # retry once against the configured fallback provider.
-        logger.warning(
-            "LLM fallback: primary %s/%s exhausted capacity retries — "
-            "switching to %s/%s for this call",
-            settings.DEFAULT_LLM_PROVIDER, settings.DEFAULT_MODEL,
-            settings.FALLBACK_LLM_PROVIDER, settings.FALLBACK_LLM_MODEL,
-        )
+        stalls or exhausts its capacity-error retry budget (FallbackTriggered)
+        and a fallback provider is configured, swap to the fallback for one
+        retry. Any partial state from the failed primary attempt is discarded.
+        A failed primary is skipped for LLM_FALLBACK_COOLDOWN_SECONDS so a
+        multi-round tool loop doesn't re-wait out the stall on every call."""
+        has_fallback = bool(settings.FALLBACK_LLM_PROVIDER and settings.FALLBACK_LLM_MODEL)
+        primary_model = getattr(agent.llm, "model", "")
+        if not (has_fallback and time.monotonic() < _primary_down_until.get(primary_model, 0.0)):
+            try:
+                await _consume(agent.llm)
+                return
+            except FallbackTriggered:
+                if not has_fallback:
+                    raise
+            _primary_down_until[primary_model] = (
+                time.monotonic() + settings.LLM_FALLBACK_COOLDOWN_SECONDS
+            )
+            # Primary gave up — discard partial output and retry once against
+            # the configured fallback provider.
+            logger.warning(
+                "LLM fallback: primary %s stalled or exhausted capacity retries — "
+                "switching to %s/%s for %.0fs",
+                primary_model,
+                settings.FALLBACK_LLM_PROVIDER, settings.FALLBACK_LLM_MODEL,
+                settings.LLM_FALLBACK_COOLDOWN_SECONDS,
+            )
         response_content.clear()
         tool_calls.clear()
         from .llm_providers import create_provider

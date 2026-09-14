@@ -20,11 +20,20 @@ Usage in agent-generated backend_code:
         # Combine health + custom data
         return {"status": "success", "health": hr, "mood": entries}
 """
-import json
+# This file is exec'd into the page's route.py namespace. The un-aliased
+# imports stay available to page code; the helpers themselves use private
+# aliases, because page code that does e.g. ``import datetime`` rebinds the
+# plain names.
+import json  # noqa: F401
+import json as _ph_json
 import re
 import sqlite3
-import statistics
-from datetime import datetime, timedelta, timezone
+import statistics  # noqa: F401
+import statistics as _ph_statistics
+from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import datetime as _ph_datetime
+from datetime import timedelta as _ph_timedelta
+from datetime import timezone as _ph_timezone
 
 # --- SQL safety guardrails ----------------------------------------------
 # Personalised pages run agent-generated Python that calls query_memory /
@@ -132,10 +141,10 @@ def query_health(
     # window (by 8h in UTC+8) and shifts every day bucket.
     if not start:
         start = (
-            datetime.now(timezone.utc) - timedelta(days=days)
+            _ph_datetime.now(_ph_timezone.utc) - _ph_timedelta(days=days)
         ).strftime("%Y-%m-%dT%H:%M:%S")
     if not end:
-        end = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        end = _ph_datetime.now(_ph_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     conn = _get_health_conn()
     try:
@@ -276,10 +285,10 @@ def health_stats(feature_type: str, days: int = 7) -> dict:
     values = [r["value"] for r in data]
     return {
         "count": len(values),
-        "mean": round(statistics.mean(values), 2),
+        "mean": round(_ph_statistics.mean(values), 2),
         "min": round(min(values), 2),
         "max": round(max(values), 2),
-        "std": round(statistics.stdev(values), 2) if len(values) > 1 else 0,
+        "std": round(_ph_statistics.stdev(values), 2) if len(values) > 1 else 0,
         "latest_value": data[0]["value"],
         "latest_time": data[0]["timestamp"],
     }
@@ -297,7 +306,7 @@ def parse_request_body(request) -> dict:
     try:
         body = getattr(request, '_body', b'')
         if body:
-            return json.loads(body)
+            return _ph_json.loads(body)
     except Exception:
         pass
     return {}

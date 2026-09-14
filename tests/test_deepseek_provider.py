@@ -2,7 +2,7 @@
 DeepSeek V4 provider integration smoke tests.
 
 These tests mock the AsyncOpenAI client and verify that DeepSeekProvider:
-  - resolves the correct base_url and default model (deepseek-v4-flash)
+  - resolves the correct base_url and default model (deepseek-flash)
   - flags ``_is_deepseek = True`` so the OpenAI reasoning-effort branch is
     bypassed (DeepSeek rejects the OpenAI-only "minimal" value)
   - threads ``DEEPSEEK_THINKING`` into ``extra_body.thinking``
@@ -91,7 +91,7 @@ def test_deepseek_provider_defaults(monkeypatch):
     assert isinstance(provider, DeepSeekProvider)
     assert isinstance(provider, OpenAIProvider)
     assert provider._is_deepseek is True
-    assert provider.model == "deepseek-v4-flash"
+    assert provider.model == "deepseek-flash"
 
 
 def test_deepseek_provider_explicit_pro(monkeypatch):

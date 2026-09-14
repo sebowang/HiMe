@@ -25,6 +25,7 @@ Reasoning policy:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -39,6 +40,40 @@ from . import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _stall_guarded(stream, timeout: float, model: str):
+    """Iterate *stream*, raising ``FallbackTriggered`` if no chunk arrives
+    within *timeout* seconds.
+
+    httpx's ``read`` timeout alone cannot catch a queued request: DeepSeek
+    answers 200 immediately and then sends SSE ``: keep-alive`` comments
+    every ~12s until inference starts (up to 10 min). Those bytes reset the
+    read timer, but the SDK's SSE decoder drops them, so we time the gap
+    between *parsed* chunks instead.
+    """
+    from ..errors import FallbackTriggered
+
+    it = stream.__aiter__()
+    while True:
+        try:
+            if timeout > 0:
+                chunk = await asyncio.wait_for(it.__anext__(), timeout)
+            else:
+                chunk = await it.__anext__()
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            try:
+                await stream.close()
+            except Exception:
+                pass
+            logger.warning(
+                "LLM stream stalled: %s sent no chunk for %.0fs — aborting",
+                model, timeout,
+            )
+            raise FallbackTriggered("", model)
+        yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +181,15 @@ class OpenAIProvider(BaseLLMProvider):
                 if thinking in ("enabled", "disabled"):
                     kwargs.setdefault("extra_body", {})
                     kwargs["extra_body"]["thinking"] = {"type": thinking}
+                # DeepSeek ignores ``max_completion_tokens`` and, without
+                # ``max_tokens``, caps non-thinking output at 8K — too small
+                # for large tool calls such as create_page (full HTML page).
+                kwargs["max_tokens"] = (
+                    kwargs.pop("max_completion_tokens", None)
+                    or settings.DEEPSEEK_MAX_TOKENS
+                )
+                if max_tokens is None:
+                    max_tokens = kwargs["max_tokens"]
                 ds_effort = (settings.DEEPSEEK_REASONING_EFFORT or "").strip()
                 if ds_effort:
                     kwargs["reasoning_effort"] = ds_effort
@@ -164,7 +208,8 @@ class OpenAIProvider(BaseLLMProvider):
                     # The OpenAI API rejects parallel tool calls when reasoning
                     # effort is "minimal". Disable them transparently so users
                     # don't have to remember this constraint.
-                    if effort.lower() == "minimal":
+                    # (Only valid alongside ``tools`` — 400 otherwise.)
+                    if effort.lower() == "minimal" and tools:
                         kwargs["parallel_tool_calls"] = False
 
             # The network request must happen *inside* the retried callable —
@@ -191,7 +236,8 @@ class OpenAIProvider(BaseLLMProvider):
                             "Retrying with max_tokens=%d",
                             input_tokens, max_tokens, ctx_limit, safe_max,
                         )
-                        kwargs["max_completion_tokens"] = safe_max
+                        cap_key = "max_tokens" if self._is_deepseek else "max_completion_tokens"
+                        kwargs[cap_key] = safe_max
                         max_tokens = safe_max
                         stream_ctx = await retry_async(_call)
                     else:
@@ -208,7 +254,9 @@ class OpenAIProvider(BaseLLMProvider):
             finish_reason: str | None = None
             cache_read_tokens: int | None = None
 
-            async for chunk in stream_ctx:
+            from backend.config import settings as _settings
+            stall_timeout = float(_settings.LLM_STREAM_STALL_TIMEOUT or 0)
+            async for chunk in _stall_guarded(stream_ctx, stall_timeout, self.model):
                 # Usage information (only present in the last chunk when stream_options requested)
                 if chunk.usage:
                     prompt_tokens     = chunk.usage.prompt_tokens
@@ -373,6 +421,22 @@ class OpenAIProvider(BaseLLMProvider):
             )
 
         except Exception as exc:
+            from ..errors import FallbackTriggered
+            if isinstance(exc, FallbackTriggered):
+                # Stall / capacity exhaustion: let the caller switch to the
+                # fallback provider instead of turning it into an error chunk.
+                provider_write_log(
+                    provider="openai",
+                    model=self.model,
+                    prompt_tokens=None,
+                    completion_tokens=None,
+                    duration_ms=int((time.perf_counter() - _t0) * 1000),
+                    tools=tools,
+                    messages=messages,
+                    tool_calls_list=[],
+                    response_texts=["ERROR: stalled or capacity-exhausted — fallback"],
+                )
+                raise
             logger.error("OpenAI API error: %s", exc, exc_info=True)
             provider_write_log(
                 provider="openai",
@@ -457,25 +521,26 @@ class GroqProvider(OpenAIProvider):
 
 
 class DeepSeekProvider(OpenAIProvider):
-    """DeepSeek API provider — V4 lineup (April 2026).
+    """DeepSeek API provider — V4.1 lineup (September 2026).
 
     Supported models:
-      - ``deepseek-v4-flash`` (default; 284B total / 13B active, 1M ctx)
-      - ``deepseek-v4-pro``   (1.6T total / 49B active, 1M ctx, 384K max output)
+      - ``deepseek-flash``  (default; V4.1-Flash, 1M ctx). The old
+        ``deepseek-v4-flash`` name was retired 2026-09-10 and only
+        temporarily routes here.
+      - ``deepseek-v4-pro`` (1M ctx, 384K max output)
 
     Both models support dual modes (thinking / non-thinking), tool calling,
     JSON output and prompt caching. Mode is toggled with ``DEEPSEEK_THINKING``
     in ``.env`` (``enabled`` / ``disabled``), reasoning depth with
     ``DEEPSEEK_REASONING_EFFORT`` (``high`` / ``max``).
 
-    ``deepseek-chat`` and ``deepseek-reasoner`` route to V4-Flash and will be
-    fully retired after 2026-07-24 15:59 UTC. New deployments should use the
-    ``deepseek-v4-*`` model IDs directly.
+    ``deepseek-chat`` and ``deepseek-reasoner`` were fully retired on
+    2026-07-24 15:59 UTC.
     """
 
     _is_deepseek: bool = True
 
-    def __init__(self, model: str = "deepseek-v4-flash", api_key: str | None = None, **kwargs) -> None:
+    def __init__(self, model: str = "deepseek-flash", api_key: str | None = None, **kwargs) -> None:
         super().__init__(model=model, api_key=api_key, base_url="https://api.deepseek.com", **kwargs)
 
 
