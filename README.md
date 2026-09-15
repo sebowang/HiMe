@@ -29,6 +29,7 @@
 ---
 
 HiMe (Health Intelligence Management Engine) is a self-hosted, fully local, secure and open-source one-stop personal health AI agent platform. It understand your wearable health data in real-time and provide you with proactive insights 7/24, and of course, a cute pixel-art cat that serves as your personal health digital twin.
+Download the app at https://apps.apple.com/app/himeapp/id6762160735
 
 > **News** 📢 Our paper is now on arXiv and accepted as an EMNLP 2026 demo paper! 🎉🎉🎉 Check it out at: [**HiMe: A Self-Hosted Personal Health AI Agent Platform**](https://arxiv.org/abs/2607.21019). Give it a read to learn more about the system design and motivation behind HiMe.
 
