@@ -81,11 +81,25 @@ Both should respond. If either fails, re-check the firewall rules and that `./hi
 
 Use this shape if you want HiMe to be reachable from outside your LAN. The only supported topology is **reverse proxy in front of the backend**, with TLS terminated at the proxy. Do **not** expose the FastAPI server directly to the public internet.
 
+This works the same on a VPS, a cloud VM, or a home server with a public IP. A LAN is not required.
+
 ### 2.1. DNS and TLS prerequisites
 
-- A DNS name pointing at the proxy host (for example `hime.example.com`).
+The iOS app derives every service URL from a single domain you type into Settings. For a domain such as `example.com` it connects to **fixed subdomains**:
+
+| Hostname | Used by | Proxies to |
+|---|---|---|
+| `api.example.com` | iOS app API, in-app chat WebSocket (`https://` / `wss://`) | backend `127.0.0.1:8000` |
+| `watch.example.com` | iOS / watchOS HealthKit sync (`wss://`) and its HTTP endpoints | Watch Exporter `127.0.0.1:8765` |
+| `hime.example.com` *(optional, any name)* | Web dashboard in a browser | frontend `127.0.0.1:5173` |
+
+So you need:
+
+- DNS records for `api.` and `watch.` (plus the dashboard hostname if you use it) pointing at the proxy host. A single hostname with path prefixes such as `/ingest/` does **not** work with the iOS app.
 - Inbound TCP 80 and 443 reachable on the proxy host.
-- A TLS certificate. Both examples below use Let's Encrypt.
+- A TLS certificate for each hostname. Both examples below use Let's Encrypt.
+
+> **Do not enter a bare IP address in the app for a public server.** A plain IPv4 address (or `*.local`) puts the app in LAN mode: it talks unencrypted `http://<ip>:8000` and `ws://<ip>:8765`, which would send your auth token and health data in cleartext over the internet.
 
 ### 2.2. Set an API auth token
 
@@ -116,6 +130,57 @@ Leave this unset to use defaults for local development.
 ### 2.4. Example: nginx
 
 ```nginx
+# Shared WebSocket upgrade handling
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# iOS app API + in-app chat WebSocket
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    client_max_body_size 20m;   # chat image uploads
+
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        $connection_upgrade;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+    }
+}
+
+# Watch Exporter — HealthKit sync from iPhone / Apple Watch
+server {
+    listen 443 ssl http2;
+    server_name watch.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/watch.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/watch.example.com/privkey.pem;
+
+    client_max_body_size 50m;   # large HealthKit backfills
+
+    location / {
+        proxy_pass         http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        $connection_upgrade;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+    }
+}
+
+# Web dashboard (optional)
 server {
     listen 443 ssl http2;
     server_name hime.example.com;
@@ -123,62 +188,80 @@ server {
     ssl_certificate     /etc/letsencrypt/live/hime.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/hime.example.com/privkey.pem;
 
-    # FastAPI + /ws/* WebSockets
     location / {
-        proxy_pass         http://127.0.0.1:8000;
+        proxy_pass         http://127.0.0.1:5173;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade           $http_upgrade;
-        proxy_set_header   Connection        "upgrade";
+        proxy_set_header   Connection        $connection_upgrade;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
         proxy_read_timeout 3600s;
     }
-
-    # Watch Exporter (ingestion)
-    location /ingest/ {
-        proxy_pass         http://127.0.0.1:8765/;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade    $http_upgrade;
-        proxy_set_header   Connection "upgrade";
-        proxy_set_header   Host       $host;
-        client_max_body_size 50m;
-    }
 }
 
 server {
     listen 80;
-    server_name hime.example.com;
+    server_name api.example.com watch.example.com hime.example.com;
     return 301 https://$host$request_uri;
 }
 ```
 
-Obtain the certificate with certbot:
+Obtain the certificates with certbot:
 
 ```bash
-sudo certbot --nginx -d hime.example.com
+sudo certbot --nginx -d api.example.com -d watch.example.com -d hime.example.com
 ```
+
+The dashboard on port 5173 forwards `/api/` to the backend itself (nginx in the Docker image, the Vite proxy in native mode), so it only needs the single proxy block above. In native mode (`./hime.sh start`) also add the dashboard hostname to `VITE_ALLOWED_HOSTS` in `frontend/.env.local`, otherwise Vite rejects the request.
 
 ### 2.5. Example: Caddy
 
-Caddy handles TLS automatically via Let's Encrypt. The entire configuration fits in a few lines:
+Caddy handles TLS automatically via Let's Encrypt, including WebSocket upgrades:
 
 ```caddy
+api.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}
+
+watch.example.com {
+    reverse_proxy 127.0.0.1:8765
+}
+
+# Web dashboard (optional)
 hime.example.com {
     encode zstd gzip
-
-    @ingest path /ingest/*
-    reverse_proxy @ingest 127.0.0.1:8765
-
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:5173
 }
 ```
 
-Run `sudo caddy reload` after editing `/etc/caddy/Caddyfile`. Caddy will negotiate a certificate on first request and renew it automatically.
+Run `sudo caddy reload` after editing `/etc/caddy/Caddyfile`. Caddy will negotiate a certificate for each hostname on first request and renew them automatically.
 
-### 2.6. Firewall
+### 2.6. Firewall and port binding
 
-Close ports 8000, 8765, and 5173 on the public interface. Only 80 and 443 should be reachable from the internet.
+Only 80 and 443 should be reachable from the internet. Ports 8000, 8765, and 5173 must not be.
+
+The default `docker-compose.yml` publishes those three ports on **all** interfaces (`"8000:8000"` etc.), and Docker's published ports bypass `ufw`/`firewalld` rules on many distributions. On a VPS, rebind them to loopback so only the reverse proxy on the same host can reach them — for example in a `docker-compose.override.yml`:
+
+```yaml
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+  frontend:
+    ports: !override
+      - "127.0.0.1:5173:5173"
+  watch:
+    ports: !override
+      - "127.0.0.1:8765:8765"
+```
+
+(`!override` needs Docker Compose v2.24+.) If the reverse proxy runs on a different machine, keep the ports on a private network interface instead and firewall them from the public side.
+
+### 2.7. Configure the iOS app
+
+In the app's Settings, enter the **bare domain** (`example.com`, no scheme, no subdomain) as the server address, and paste the same `API_AUTH_TOKEN` into **Auth Token**. The app will then use `https://api.example.com` and `wss://watch.example.com`.
 
 ---
 
