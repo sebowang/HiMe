@@ -28,7 +28,7 @@
 
 ---
 
-HiMe (Health Intelligence Management Engine) is a self-hosted, fully local, secure and open-source one-stop personal health AI agent platform. It understand your wearable health data in real-time and provide you with proactive insights 7/24, and of course, a cute pixel-art cat that serves as your personal health digital twin.
+HiMe (Health Intelligence Management Engine) is a self-hosted, fully local, secure, and open-source one-stop personal health AI agent platform. It understands your wearable health data in real-time and provides you with proactive insights 7/24, and of course, a cute pixel-art cat that serves as your personal health digital twin.
 Download the app at https://apps.apple.com/app/himeapp/id6762160735
 
 > **News** 📢 Our paper is now on arXiv and accepted as an EMNLP 2026 demo paper! 🎉🎉🎉 Check it out at: [**HiMe: A Self-Hosted Personal Health AI Agent Platform**](https://arxiv.org/abs/2607.21019). Give it a read to learn more about the system design and motivation behind HiMe.
@@ -52,14 +52,21 @@ Download the app at https://apps.apple.com/app/himeapp/id6762160735
 </p>
 
 - Real-time wearable data ingestion from Apple Watch + iPhone, including heart rate, HRV, SpO2, sleep stages, workouts, mobility, and 50+ metrics more.
-- iOS and watchOS companion apps for easy syncing health data and controlling the agent.
+- iOS and watchOS companion apps for easy syncing of health data and controlling the agent.
 - Native in-app chat — talk to the agent directly inside the iOS app: streaming replies, image sharing, evidence-backed answers, and proactive push (APNs) when the app is closed. No bot binding required.
 - Personalised health plan — a quick onboarding goal survey, then the agent designs and schedules your recurring check-ins automatically (redesign anytime from Settings).
-- Autonomous AI analysis with scheduled checks and event triggers, delivered as chart-rich (图文并茂) reports.
+- Autonomous AI analysis with scheduled checks and event triggers, delivered as chart-rich reports.
 - Optional IM gateways — chat over Telegram, Feishu, or WeChat (via the official ClawBot plugin) instead of, or alongside, the in-app chat.
 - Agent-generated personalised pages on demand for repeated workflows or personalised interaction. Generate your app, not learn to use it.
 - Skills system for reusable analysis playbooks.
 - Strong self-hosted privacy posture.
+- **You like the Apple/Whoop Readiness and Health Age features? Just ask your HiMe agent to create one!**
+
+<p align="center">
+<img width="774" height="550" alt="image" src="https://github.com/user-attachments/assets/f9e30341-6d8a-4661-b552-cae8d2621312" />
+</p>
+
+
 
 ## Quick Start
 
